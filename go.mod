@@ -1,4 +1,4 @@
-module github.com/gokcehan/lf
+module github.com/dpvpro/lf
 
 go 1.24.0
 
