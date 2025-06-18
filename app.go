@@ -404,18 +404,13 @@ func (app *app) loop() {
 				oldCurrPath = curr.path
 			}
 
-			if wd, err := os.Getwd(); err == nil && wd != app.nav.currDir().path {
-				// if any path component in the current path is renamed, then
-				// the entire set of directories has to be reloaded
-				app.nav.cd(wd)
-			} else {
-				for i := range app.nav.dirs {
-					if app.nav.dirs[i].path == d.path {
-						app.nav.dirs[i] = d
-					}
+			for i := range app.nav.dirs {
+				if app.nav.dirs[i].path == d.path {
+					app.nav.dirs[i] = d
 				}
-				app.nav.position()
 			}
+
+			app.nav.position()
 
 			curr, err := app.nav.currFile()
 			if err == nil {
@@ -471,12 +466,19 @@ func (app *app) loop() {
 			}
 			app.ui.draw(app.nav)
 		case path := <-app.nav.delChan:
-			delete(app.nav.dirCache, path)
-			delete(app.nav.regCache, path)
-
-			delete(app.nav.selections, path)
+			deletePathRecursive(app.nav.selections, path)
 			if len(app.nav.selections) == 0 {
 				app.nav.selectionInd = 0
+			}
+
+			deletePathRecursive(app.nav.regCache, path)
+
+			deletePathRecursive(app.nav.dirCache, path)
+			currPath := app.nav.currDir().path
+			if currPath == path || strings.HasPrefix(currPath, path+string(filepath.Separator)) {
+				if wd, err := os.Getwd(); err == nil {
+					app.nav.getDirs(wd)
+				}
 			}
 		case ev := <-app.ui.evChan:
 			e := app.ui.readEvent(ev, app.nav)
@@ -549,6 +551,7 @@ func (app *app) runShell(s string, args []string, prefix string) {
 	app.nav.exportFiles()
 	app.ui.exportSizes()
 	app.ui.exportMode()
+	exportLfPath()
 	exportOpts()
 
 	gState.mutex.Lock()
@@ -602,8 +605,8 @@ func (app *app) runShell(s string, args []string, prefix string) {
 		normal(app)
 		app.cmd = cmd
 		app.cmdOutBuf = nil
-		app.ui.msg = ""
 		app.ui.cmdPrefix = ">"
+		app.ui.echo("")
 
 		go func() {
 			eol := false
