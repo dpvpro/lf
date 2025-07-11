@@ -159,24 +159,25 @@ func readdir(path string) ([]*file, error) {
 }
 
 type dir struct {
-	loading     bool       // directory is loading from disk
-	loadTime    time.Time  // current loading or last load time
-	ind         int        // index of current entry in files
-	pos         int        // position of current entry in ui
-	path        string     // full path of directory
-	files       []*file    // displayed files in directory including or excluding hidden ones
-	allFiles    []*file    // all files in directory including hidden ones (same array as files)
-	sortby      sortMethod // sortby value from last sort
-	dirfirst    bool       // dirfirst value from last sort
-	dironly     bool       // dironly value from last sort
-	hidden      bool       // hidden value from last sort
-	reverse     bool       // reverse value from last sort
-	hiddenfiles []string   // hiddenfiles value from last sort
-	filter      []string   // last filter for this directory
-	ignorecase  bool       // ignorecase value from last sort
-	ignoredia   bool       // ignoredia value from last sort
-	locale      string     // locale value from last sort
-	noPerm      bool       // whether lf has no permission to open the directory
+	loading      bool       // directory is loading from disk
+	loadTime     time.Time  // current loading or last load time
+	ind          int        // index of current entry in files
+	pos          int        // position of current entry in ui
+	path         string     // full path of directory
+	files        []*file    // displayed files in directory including or excluding hidden ones
+	allFiles     []*file    // all files in directory including hidden ones (same array as files)
+	sortby       sortMethod // sortby value from last sort
+	dirfirst     bool       // dirfirst value from last sort
+	dironly      bool       // dironly value from last sort
+	hidden       bool       // hidden value from last sort
+	reverse      bool       // reverse value from last sort
+	visualAnchor int        // index where visual mode was initiated
+	hiddenfiles  []string   // hiddenfiles value from last sort
+	filter       []string   // last filter for this directory
+	ignorecase   bool       // ignorecase value from last sort
+	ignoredia    bool       // ignoredia value from last sort
+	locale       string     // locale value from last sort
+	noPerm       bool       // whether lf has no permission to open the directory
 }
 
 func newDir(path string) *dir {
@@ -188,11 +189,12 @@ func newDir(path string) *dir {
 	}
 
 	return &dir{
-		loadTime: time,
-		path:     path,
-		files:    files,
-		allFiles: files,
-		noPerm:   os.IsPermission(err),
+		loadTime:     time,
+		path:         path,
+		files:        files,
+		allFiles:     files,
+		visualAnchor: -1,
+		noPerm:       os.IsPermission(err),
 	}
 }
 
@@ -238,6 +240,27 @@ func (dir *dir) sort() {
 		} else {
 			sort.SliceStable(dir.files, func(i, j int) bool {
 				s1, s2 := normalize(dir.files[i].Name(), dir.files[j].Name(), dir.ignorecase, dir.ignoredia)
+				if !dir.reverse {
+					return naturalLess(s1, s2)
+				} else {
+					return naturalLess(s2, s1)
+				}
+			})
+		}
+	case customSort:
+		if collator, err := makeCollator(dir.locale, collate.Numeric); err == nil {
+			sort.SliceStable(dir.files, func(i, j int) bool {
+				s1, s2 := normalize(stripAnsi(dir.files[i].customInfo), stripAnsi(dir.files[j].customInfo), dir.ignorecase, dir.ignoredia)
+				result := collator.CompareString(s1, s2)
+				if !dir.reverse {
+					return result < 0
+				} else {
+					return result > 0
+				}
+			})
+		} else {
+			sort.SliceStable(dir.files, func(i, j int) bool {
+				s1, s2 := normalize(stripAnsi(dir.files[i].customInfo), stripAnsi(dir.files[j].customInfo), dir.ignorecase, dir.ignoredia)
 				if !dir.reverse {
 					return naturalLess(s1, s2)
 				} else {
@@ -399,6 +422,28 @@ func (d *dir) fileNames() []string {
 	return names
 }
 
+func (nav *nav) isVisualMode() bool {
+	return nav.init && nav.currDir().visualAnchor != -1
+}
+
+func (dir *dir) visualSelections() []string {
+	paths := []string{}
+	if dir.visualAnchor == -1 || len(dir.files) == 0 {
+		return paths
+	}
+
+	beg, end := dir.ind, dir.visualAnchor
+	if beg > end {
+		beg, end = end, beg
+	}
+
+	for _, f := range dir.files[beg : end+1] {
+		paths = append(paths, f.path)
+	}
+
+	return paths
+}
+
 func (dir *dir) sel(name string, height int) {
 	if len(dir.files) == 0 {
 		dir.ind, dir.pos = 0, 0
@@ -489,18 +534,19 @@ type nav struct {
 
 func (nav *nav) loadDirInternal(path string) *dir {
 	d := &dir{
-		loading:     true,
-		loadTime:    time.Now(),
-		path:        path,
-		sortby:      getSortBy(path),
-		dirfirst:    getDirFirst(path),
-		dironly:     getDirOnly(path),
-		hidden:      getHidden(path),
-		reverse:     getReverse(path),
-		locale:      getLocale(path),
-		hiddenfiles: gOpts.hiddenfiles,
-		ignorecase:  gOpts.ignorecase,
-		ignoredia:   gOpts.ignoredia,
+		loading:      true,
+		loadTime:     time.Now(),
+		path:         path,
+		sortby:       getSortBy(path),
+		dirfirst:     getDirFirst(path),
+		dironly:      getDirOnly(path),
+		hidden:       getHidden(path),
+		reverse:      getReverse(path),
+		locale:       getLocale(path),
+		visualAnchor: -1,
+		hiddenfiles:  gOpts.hiddenfiles,
+		ignorecase:   gOpts.ignorecase,
+		ignoredia:    gOpts.ignoredia,
 	}
 	go func() {
 		d := newDir(path)
@@ -705,8 +751,15 @@ func (nav *nav) exportFiles() {
 	}
 	currSelections := strings.Join(selections, gOpts.filesep)
 
+	var vSelections []string
+	for _, selection := range nav.currDir().visualSelections() {
+		vSelections = append(vSelections, quoteString(selection))
+	}
+	currVSelections := strings.Join(vSelections, gOpts.filesep)
+
 	os.Setenv("f", currFile)
 	os.Setenv("fs", currSelections)
+	os.Setenv("fv", currVSelections)
 	os.Setenv("PWD", quoteString(nav.currDir().path))
 
 	if len(selections) == 0 {
@@ -1215,20 +1268,12 @@ func (nav *nav) tag(tag string) error {
 	return nil
 }
 
-func (nav *nav) invertAfter(ix int) {
+func (nav *nav) invert() {
 	dir := nav.currDir()
-	for _, f := range dir.files[ix:] {
+	for _, f := range dir.files {
 		path := filepath.Join(dir.path, f.Name())
 		nav.toggleSelection(path)
 	}
-}
-
-func (nav *nav) invert() {
-	nav.invertAfter(0)
-}
-
-func (nav *nav) invertBelow() {
-	nav.invertAfter(nav.currDir().ind)
 }
 
 func (nav *nav) unselect() {
@@ -1336,13 +1381,13 @@ func (nav *nav) moveAsync(app *app, srcs []string, dstDir string) {
 		file := filepath.Base(src)
 		dst := filepath.Join(dstDir, file)
 
-		dstStat, err := os.Stat(dst)
-		if os.SameFile(srcStat, dstStat) {
-			errCount++
-			echo.args[0] = fmt.Sprintf("[%d] rename %s %s: source and destination are the same file", errCount, src, dst)
-			app.ui.exprChan <- echo
-			continue
-		} else if !os.IsNotExist(err) {
+		if dstStat, err := os.Stat(dst); err == nil {
+			if os.SameFile(srcStat, dstStat) {
+				errCount++
+				echo.args[0] = fmt.Sprintf("[%d] rename %s %s: source and destination are the same file", errCount, src, dst)
+				app.ui.exprChan <- echo
+				continue
+			}
 			ext := getFileExtension(dstStat)
 			basename := file[:len(file)-len(ext)]
 			var newPath string

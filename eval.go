@@ -432,6 +432,8 @@ func (e *setExpr) eval(app *app, args []string) {
 			return
 		}
 		gOpts.truncatepct = n
+	case "visualfmt":
+		gOpts.visualfmt = e.val
 	case "waitmsg":
 		gOpts.waitmsg = e.val
 	default:
@@ -543,9 +545,29 @@ func (e *setLocalExpr) eval(app *app, args []string) {
 
 func (e *mapExpr) eval(app *app, args []string) {
 	if e.expr == nil {
-		delete(gOpts.keys, e.keys)
+		delete(gOpts.nkeys, e.keys)
+		delete(gOpts.vkeys, e.keys)
 	} else {
-		gOpts.keys[e.keys] = e.expr
+		gOpts.nkeys[e.keys] = e.expr
+		gOpts.vkeys[e.keys] = e.expr
+	}
+	app.ui.loadFileInfo(app.nav)
+}
+
+func (e *nmapExpr) eval(app *app, args []string) {
+	if e.expr == nil {
+		delete(gOpts.nkeys, e.keys)
+	} else {
+		gOpts.nkeys[e.keys] = e.expr
+	}
+	app.ui.loadFileInfo(app.nav)
+}
+
+func (e *vmapExpr) eval(app *app, args []string) {
+	if e.expr == nil {
+		delete(gOpts.vkeys, e.keys)
+	} else {
+		gOpts.vkeys[e.keys] = e.expr
 	}
 	app.ui.loadFileInfo(app.nav)
 }
@@ -803,6 +825,16 @@ func normal(app *app) {
 	app.ui.cmdAccLeft = nil
 	app.ui.cmdAccRight = nil
 	app.ui.cmdPrefix = ""
+
+	// ensure the mode indicator in `statfmt` is updated properly
+	app.ui.loadFileInfo(app.nav)
+}
+
+func visual(app *app) {
+	dir := app.nav.currDir()
+	dir.visualAnchor = dir.ind
+
+	app.ui.loadFileInfo(app.nav)
 }
 
 func insert(app *app, arg string) {
@@ -1298,11 +1330,6 @@ func (e *callExpr) eval(app *app, args []string) {
 			return
 		}
 		app.nav.invert()
-	case "invert-below":
-		if !app.nav.init {
-			return
-		}
-		app.nav.invertBelow()
 	case "unselect":
 		app.nav.unselect()
 	case "calcdirsize":
@@ -1319,8 +1346,10 @@ func (e *callExpr) eval(app *app, args []string) {
 		app.ui.sort()
 	case "clearmaps":
 		// leave `:` and cmaps bound so the user can still exit using `:quit`
-		clear(gOpts.keys)
-		gOpts.keys[":"] = &callExpr{"read", nil, 1}
+		clear(gOpts.nkeys)
+		clear(gOpts.vkeys)
+		gOpts.nkeys[":"] = &callExpr{"read", nil, 1}
+		gOpts.vkeys[":"] = &callExpr{"read", nil, 1}
 	case "copy":
 		if !app.nav.init {
 			return
@@ -2288,10 +2317,64 @@ func (e *callExpr) eval(app *app, args []string) {
 		}
 
 		if len(strings.Trim(v, " ")) == 0 {
-			f.customInfo = ""
-		} else {
-			f.customInfo = v
+			v = ""
 		}
+		if f.customInfo != v {
+			f.customInfo = v
+			// only sort when order changes
+			if getSortBy(dir) == customSort {
+				d.sort()
+			}
+		}
+	case "visual":
+		if !app.nav.init {
+			return
+		}
+		visual(app)
+	case "visual-accept":
+		if !app.nav.init {
+			return
+		}
+		dir := app.nav.currDir()
+		for _, path := range dir.visualSelections() {
+			if _, ok := app.nav.selections[path]; !ok {
+				app.nav.selections[path] = app.nav.selectionInd
+				app.nav.selectionInd++
+			}
+		}
+		// resetting visual mode here instead of inside `normal()`
+		// allows us to use visual mode inside search, find etc.
+		dir.visualAnchor = -1
+		normal(app)
+	case "visual-unselect":
+		if !app.nav.init {
+			return
+		}
+		dir := app.nav.currDir()
+		for _, path := range dir.visualSelections() {
+			delete(app.nav.selections, path)
+		}
+		if len(app.nav.selections) == 0 {
+			app.nav.selectionInd = 0
+		}
+		dir.visualAnchor = -1
+		normal(app)
+	case "visual-discard":
+		if !app.nav.init {
+			return
+		}
+		dir := app.nav.currDir()
+		dir.visualAnchor = -1
+		normal(app)
+	case "visual-change":
+		if !app.nav.isVisualMode() {
+			return
+		}
+		dir := app.nav.currDir()
+		beg := max(dir.ind-dir.pos, 0)
+		dir.ind, dir.visualAnchor = dir.visualAnchor, dir.ind
+		dir.pos = dir.ind - beg
+		dir.boundPos(app.nav.height)
 	default:
 		cmd, ok := gOpts.cmds[e.name]
 		if !ok {
