@@ -280,6 +280,10 @@ func init() {
 	gOpts.wrapscan = true
 	gOpts.wrapscroll = false
 
+	// https://github.com/gokcehan/lf/wiki/Previews#with-stpv-and-ctpv
+	gOpts.previewer = "ctpv"
+	gOpts.cleaner = "ctpvclear"
+
 	// Normal and Visual mode
 	keys := map[string]expr{
 		"k":          &callExpr{"up", nil, 1},
