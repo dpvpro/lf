@@ -2,6 +2,11 @@ module github.com/dpvpro/lf
 
 go 1.24.0
 
+retract (
+	v0.0.0-20250711232933-0d122d745175
+	v0.0.0-20250918023500-027976b1e644
+)
+
 require (
 	github.com/djherbis/times v1.6.0
 	github.com/fsnotify/fsnotify v1.9.0
